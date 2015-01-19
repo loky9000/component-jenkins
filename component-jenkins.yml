@@ -1,29 +1,206 @@
 application:
   configuration:
-    input.server-os: {image: "us-east-1/ami-1ba18d72", identity: ec2-user}
-    input.server-instance-size: "m1.small"
-    input.slave-linux-os: {image: "us-east-1/ami-1ba18d72", identity: "ec2-user"}
-    input.slave-linux-instance-size: "m1.small"
-    input.slave-linux-quantity: 0
-    input.slave-windows-os: {image: "us-east-1/ami-ba13abd2", identity: "Administrator"}
-    input.slave-windows-instance-size: "m1.medium"
-    input.slave-windows-quantity: 0
-    input.slave-windows-user-password: "123QweAsd"
-    input.agent-type: "jnlp"
-    input.availability: "always"
-    input.recipe-url: "https://s3.amazonaws.com/qubell-starter-kit-artifacts/qubell-bazaar/component-jenkins-cookbooks-stable-241b83a.tar.gz"
-    input.jenkins-server-port: 8080
-    input.install-method: "package"
-    input.jenkins-version: "1.572-1.1"
-    input.plugins-info: []
-    input.plugins-action: "install"
-    input.backup-uri: ""
-    input.restore-type: ""
+    configuration.slave-linux-quantity: 0
+    configuration.slave-windows-quantity: 0
+    configuration.slave-windows-user-password: "123QweAsd"
+    configuration.agent-type: "jnlp"
+    configuration.availability: "always"
+    configuration.recipe-url: "https://s3.amazonaws.com/qubell-starter-kit-artifacts/qubell-bazaar/component-jenkins-cookbooks-stable-241b83a.tar.gz"
+    configuration.jenkins-server-port: 8080
+    configuration.install-method: "package"
+    configuration.jenkins-version: "1.572-1.1"
+    configuration.plugins-info: []
+    configuration.plugins-action: "install"
+    configuration.backup-uri: ""
+    configuration.restore-type: ""
+    compute-linux.hardwareId: "m1.small"
+    compute-linux.imageId:    "ami-1ba18d72"
+    compute-linux.login:      "ec2-user"
+    compute-linux.locationId: "us-east-1"
+    compute-windows.hardwareId: "m1.small"
+    compute-windows.imageId:    "ami-c49c0dac"
+    compute-windows.login:      "Administrator"
+    compute-windows.locationId: "us-east-1"
+    compute-windows.userData:
+       |
+                          <powershell>
+
+                              If (Test-Path "C:\cygwin64\bin\bash.exe") {
+
+                              } Else {
+                                    If ((whoami).tolower().endswith("system")) {
+                                          # Cygwin service management does not work properly when installed and used from SYSTEM user
+                                          # trying to elevate priveleges to Administrator by changing password
+                                          If (Test-Path "C:\pstools\PsExec.exe") {
+                                                # already installed, skip
+                                          } else {
+                                                mkdir C:\pstools
+                                                (New-Object System.Net.WebClient).DownloadFile("http://download.sysinternals.com/files/PSTools.zip", "C:\pstools\PSTools.zip")
+                                                [System.Reflection.Assembly]::LoadWithPartialName('System.IO.Compression.FileSystem')
+                                                [System.IO.Compression.ZipFile]::ExtractToDirectory("C:\pstools\PSTools.zip", "C:\pstools")
+                                          }
+
+                                          $password = "832d95C060"
+
+                                          # TODO: this assumes that administrator password will be reset by cloudbase-init later
+                                          NET USER ADMINISTRATOR $password
+
+                                          $arguments = @("-accepteula", "-u", "Administrator", "-p", $password, "-h")
+                                          $arguments = $arguments + @("powershell") + $myInvocation.MyCommand.Definition
+                                          Start-Process C:\pstools\psexec.exe -NoNewWindow -ArgumentList $arguments
+                                          exit
+
+                                    }
+
+                                    (New-Object System.Net.WebClient).DownloadFile("http://cygwin.com/setup-x86_64.exe", "setup-x86_64.exe")
+
+                                    .\setup-x86_64.exe --no-desktop --site 'http://mirrors.kernel.org/sourceware/cygwin/' --quiet-mode --local-package-dir C:\cygwin64\local_packages --packages 'openssh,curl,util-linux,procps,wget' | Out-Null
+
+                                    C:\cygwin64\bin\bash.exe --login -c "cp /usr/bin/ps.exe /usr/bin/ps.exe~; cp /bin/ps.exe /bin/ps.exe~; cp /usr/bin/procps.exe /usr/bin/ps.exe; cp /usr/bin/procps.exe /bin/ps.exe"
+
+                                    # nearly 13.12.14 ssh-host-config bug was introduced in cygwin
+                                    # 1. root and Administrators groups are duplicated in /etc/group after installation
+                                    # 2. first ssh-host-config run fails because created cyg_server missing in /etc/passwd
+                                    # 3. sshd windows service has wrong user because of #2
+                                    Add-Type -Assembly System.Web
+                                    $cyg_server_password_length = 15
+                                    $cyg_server_password_non_alphanum = 5
+                                    $cyg_server_password = [System.Web.Security.Membership]::GeneratePassword($cyg_server_password_length, $cyg_server_password_non_alphanum)
+                                    C:\cygwin64\bin\bash.exe --login -c "mkgroup > /etc/group"
+                                    C:\cygwin64\bin\bash.exe --login -c "ssh-host-config --yes --user cyg_server --pwd '$cyg_server_password'"
+                                    C:\cygwin64\bin\bash.exe --login -c "mkpasswd > /etc/passwd"
+                                    C:\cygwin64\bin\bash.exe --login -c "cygrunsrv -R sshd"
+                                    C:\cygwin64\bin\bash.exe --login -c "ssh-host-config --yes --user cyg_server --pwd '$cyg_server_password'"
+
+                                    # sshd 6.7 is too restrictive, reverting to 6.6 defaults
+                                    C:\cygwin64\bin\bash.exe --login -c "echo Ciphers aes128-ctr,aes192-ctr,aes256-ctr,arcfour256,arcfour128,aes128-cbc,3des-cbc,blowfish-cbc,cast128-cbc,aes192-cbc,aes256-cbc,arcfour >> /etc/sshd_config"
+                                    C:\cygwin64\bin\bash.exe --login -c "echo MACs hmac-md5,hmac-sha1,hmac-ripemd160,hmac-sha1-96,hmac-md5-96 >> /etc/sshd_config"
+                                    C:\cygwin64\bin\bash.exe --login -c "echo KexAlgorithms curve25519-sha256@libssh.org,ecdh-sha2-nistp256,ecdh-sha2-nistp384,ecdh-sha2-nistp521,diffie-hellman-group-exchange-sha256,diffie-hellman-group14-sha1,diffie-hellman-group1-sha1,diffie-hellman-group-exchange-sha1 >> /etc/sshd_config"
+
+                                    netsh advfirewall firewall add rule name="CYGWIN sshd" dir=in action=allow program="C:\cygwin64\usr\sbin\sshd.exe" enable=yes
+                              }
+
+                              C:\cygwin64\bin\bash.exe --login -c "mkdir -p ~/.undeploy.me"
+
+                              echo @'
+                              param(
+                              [string]$chef_build = "10"  # 10.32.2-3 and 11.16.4-1 currently supported
+                              )
+                              # detect platform default and use ours
+                              if ($chef_build -eq "10" -or $chef_build -eq "10.16.2") {
+                                  $chef_build = "10.32.2-3"
+                              } elseif ($chef_build -eq "11") {
+                                  $chef_build = "11.16.4-1"
+                              }
+                              If ((Test-Path "C:/opscode/chef/bin/chef-solo") -or ($chefVersion -eq "")) {
+                                  Write-Host "Chef already installed or chef build not specified, skipping installation..."
+                              } Else {
+                                  cd C:\
+                                  $chef_version = $chef_build.Split("-")[0]
+                                  $chef_major_version = $chef_build.Split(".")[0]
+                                  C:\cygwin64\bin\curl.exe -O "https://opscode-omnibus-packages.s3.amazonaws.com/windows/2008r2/x86_64/chef-windows-${chef_build}.windows.msi"
+                                  Start-Process -FilePath msiexec -ArgumentList /i, "C:\chef-windows-${chef_build}.windows.msi", /quiet, /qn -Wait
+                                  # supply chef original tar
+                                  C:/cygwin64/bin/sed -i "s|tar zxvf|C:/opscode/chef/bin/tar zxvf|"  C:/opscode/chef/embedded/lib/ruby/gems/1.9.1/gems/chef-${chef_version}-x86-mingw32/lib/chef/application/solo.rb
+                                  if ($chef_major_version -eq "11") {
+                                      # fix chef bug
+                                      C:/cygwin64/bin/sed -i "s/status.exitstatus/0/g"                   C:/opscode/chef/embedded/lib/ruby/gems/1.9.1/gems/chef-${chef_version}-x86-mingw32/lib/chef/mixin/command.rb
+                                  }
+
+                                  C:\cygwin64\bin\bash.exe --login -c "mkdir ~/bin"
+
+                                  C:\cygwin64\bin\bash.exe --login -c "cat > ~/bin/shef <<'EEND'
+                          #!/usr/bin/bash --login
+                          /cygdrive/c/opscode/chef/embedded/bin/ruby.exe C:/opscode/chef/bin/shef `$*
+                          EEND
+                          chmod +x ~/bin/shef
+                          "
+
+                                  C:\cygwin64\bin\bash.exe --login -c "cat > ~/bin/chef-client <<'EEND'
+                          #!/usr/bin/bash --login
+                          /cygdrive/c/opscode/chef/embedded/bin/ruby.exe C:/opscode/chef/bin/chef-client `$*
+                          EEND
+                          chmod +x ~/bin/chef-client
+                          "
+
+                                  C:\cygwin64\bin\bash.exe --login -c "cat > ~/bin/chef-solo <<'EEND'
+                          #!/usr/bin/bash --login
+
+                          CONFIG_PATH=
+                          OTHER_ARGS=
+                          while [ \`"x`$1\`" != x ]; do
+                              if [ \`"`$1\`" == -c ]; then
+                                  shift;
+                                  CONFIG_PATH=\`"`$1\`"
+                                  shift;
+                              else
+                                  OTHER_ARGS=\`"`$OTHER_ARGS `$1\`"
+                                  shift;
+                              fi
+                          done
+
+                          FILE_CACHE=`$(grep file_cache_path `$CONFIG_PATH | awk '{print `$2}' | sed -re 's/\x22(.*)\x22/\1/')
+                          COOKBOOKS=`$(grep cookbook_path `$CONFIG_PATH | awk '{print `$2}' | sed -re 's/.*\x22(.*)\x22.*/\1/')
+                          QUBELL_COOKBOOKS=`$(grep cookbook_path `$CONFIG_PATH | awk '{print `$3}' | sed -re 's/.*\x22(.*)\x22.*/\1/')
+                          ROLES=`$(grep role_path `$CONFIG_PATH | awk '{print `$2}' | sed -re 's/.*\x22(.*)\x22.*/\1/')
+                          DATA_BAGS=`$(grep data_bag_path `$CONFIG_PATH | awk '{print `$2}' | sed -re 's/.*\x22(.*)\x22.*/\1/')
+                          NODE_PATH=`$(grep node_path `$CONFIG_PATH | awk '{print `$2}' | sed -re 's/.*\x22(.*)\x22.*/\1/')
+                          NODE_NAME=`$(grep node_name `$CONFIG_PATH | awk '{print `$2}' | sed -re 's/.*\x22(.*)\x22.*/\1/')
+                          NEW_ROOT=`$(mktemp -d)
+                          # platform homedir detection behaves wrong in some cases, so we should detect and fix it
+                          if echo `$NODE_PATH | grep -E '^.?\.undeploy.me' >/dev/null 2>/dev/null; then
+                              ROOT_FIX=`$(cygpath -m `$HOME)/
+                              OLD_ROOT=`$ROOT_FIX
+                          else
+                              ROOT_FIX=''
+                              OLD_ROOT=`$FILE_CACHE
+                          fi
+                          pushd `$OLD_ROOT
+                          icacls . /save access.txt
+                          icacls `$(cygpath -m `$NEW_ROOT) /restore access.txt
+                          popd
+                          cp -r `$ROOT_FIX`$COOKBOOKS `$NEW_ROOT/cookbooks 2>/dev/null
+                          cp -r `$ROOT_FIX`$QUBELL_COOKBOOKS `$NEW_ROOT/qubell_cookbooks 2>/dev/null
+                          cp -r `$ROOT_FIX`$DATA_BAGS `$NEW_ROOT/data_bags 2>/dev/null
+                          cp -r `$ROOT_FIX`$ROLES `$NEW_ROOT/roles 2>/dev/null
+                          cd ~
+                          NODE_PATH_FIX=`$(echo `$NODE_PATH | cut -c 2-)
+                          mkdir -p `$NODE_PATH_FIX
+                          chmod 0755 `$NODE_PATH_FIX
+                          chmod 0755 `$NODE_PATH_FIX/`$NODE_NAME.json
+                          chmod 0755 `$ROOT_FIX`$NODE_PATH_FIX
+                          chmod 0755 `$ROOT_FIX`$NODE_PATH_FIX/`$NODE_NAME.json
+                          cat `$CONFIG_PATH | sed -re \`"s|`$COOKBOOKS|`$(cygpath -m `$NEW_ROOT/cookbooks)|;s|`$QUBELL_COOKBOOKS|`$(cygpath -m `$NEW_ROOT/qubell_cookbooks)|;s|`$DATA_BAGS|`$(cygpath -m `$NEW_ROOT/data_bags)|;s|`$ROLES|`$(cygpath -m `$NEW_ROOT/roles)|;s|`$NODE_PATH|`$ROOT_FIX`$NODE_PATH_FIX|;s|\x22`$FILE_CACHE\x22|\x22`$(cygpath -m `$NEW_ROOT)\x22|;\`" > `$NEW_ROOT/client.rb
+
+                          /cygdrive/c/opscode/chef/embedded/bin/ruby.exe C:/opscode/chef/bin/chef-solo -c `$(cygpath -m `$NEW_ROOT/client.rb) `$OTHER_ARGS
+                          EEND
+                          chmod +x ~/bin/chef-solo
+                          "
+
+                                  C:\cygwin64\bin\bash.exe --login -c "cat > ~/.bashrc <<'EEND'
+                          export LC_ALL=C
+                          export LANG=C
+                          export PATH=~/bin:`$PATH
+                          EEND
+                          "
+
+                              }
+
+                          '@ | Out-File $(C:\cygwin64\bin\bash.exe --login -c "cygpath -w ~/.undeploy.me/chef-install.ps1")
+
+                              C:\cygwin64\bin\bash.exe --login -c "mkdir ~/.ssh"
+                              $drive = (Get-Volume -FileSystemLabel config-2 | % { $_.DriveLetter })
+                              If (Test-Path "${drive}:\openstack\") {
+                                  C:\cygwin64\bin\bash.exe --login -c "grep ssh-rsa `$(find `$(find /cygdrive -maxdepth 2 -name openstack -or -name ec2) -name 'meta?data.json') | sed -re 's/.*(ssh-rsa [a-zA-Z0-9+/=]+).*/\1/' | uniq >> ~/.ssh/authorized_keys"
+                              } Else {
+                                  C:\cygwin64\bin\bash.exe --login -c "curl --connect-timeout 5 169.254.169.254/latest/meta-data/public-keys/0/openssh-key >> ~/.ssh/authorized_keys"
+                              }
+
+                              net start sshd
+                          </powershell>  
   interfaces:
-    input:
-      server-os: "bind(jenkins-server#input.server-os)"
-      server-instance-size: "bind(jenkins-server#input.server-instance-size)"
-      recipe-url: "bind(jenkins-server#input.recipe-url, linux-nodes.jenkins-linux-slave#input.recipe-url, windows-nodes.jenkins-windows-slave#input.recipe-url)"
+    configuration:
+      recipe-url: "bind(jenkins-server#input.recipe-url, cluster-linux-nodes.linux-nodes#input.recipe-url, cluster-windows-nodes.windows-nodes#input.recipe-url)"
       jenkins-server-port: "bind(jenkins-server#input.jenkins-server-port)"
       install-method: "bind(jenkins-server#input.install-method)"
       jenkins-version: "bind(jenkins-server#input.jenkins-version)"
@@ -31,15 +208,22 @@ application:
       plugins-action: "bind(jenkins-server#input.plugins-action)"
       backup-uri: "bind(jenkins-server#input.backup-uri)"
       restore-type: "bind(jenkins-server#input.restore-type)"
-      slave-linux-os: "bind(linux-nodes.jenkins-linux-slave#input.slave-linux-os)"
-      slave-linux-instance-size: "bind(linux-nodes.jenkins-linux-slave#input.slave-linux-instance-size)"
-      slave-linux-quantity: "bind(proxy#input.slave-linux-quantity)"
-      slave-windows-os: "bind(windows-nodes.jenkins-windows-slave#input.slave-windows-os)"
-      slave-windows-instance-size: "bind(windows-nodes.jenkins-windows-slave#input.slave-windows-instance-size)"
-      slave-windows-quantity: "bind(proxy#input.slave-windows-quantity)"
-      slave-windows-user-password: "bind(windows-nodes.jenkins-windows-slave#input.slave-windows-user-password)"
-      agent-type: "bind(linux-nodes.jenkins-linux-slave#input.agent-type)"
-      availability: "bind(windows-nodes.jenkins-windows-slave#input.availability, linux-nodes.jenkins-linux-slave#input.availability)"
+      slave-linux-quantity: "bind(ClusterCommander#input.slave-linux-quantity)"
+      slave-windows-quantity: "bind(ClusterCommander#input.slave-windows-quantity)"
+      slave-windows-user-password: "bind(cluster-windows-nodes.windows-nodes#input.slave-windows-user-password)"
+      agent-type: "bind(cluster-linux-nodes.linux-nodes#input.agent-type)"
+      availability: "bind(cluster-windows-nodes.windows-nodes#input.availability, cluster-linux-nodes.linux-nodes#input.availability)"
+    compute-linux:
+      hardwareId: "bind(compute#configuration.hardwareId, cluster-linux-nodes.compute#configuration.hardwareId)"
+      imageId:    "bind(compute#configuration.imageId, cluster-linux-nodes.compute#configuration.imageId)"
+      login:      "bind(compute#configuration.login, cluster-linux-nodes.compute#configuration.login)"
+      locationId: "bind(compute#configuration.locationId, cluster-linux-nodes.compute#configuration.locationId)"
+    compute-windows:
+      hardwareId: "bind(cluster-windows-nodes.compute#configuration.hardwareId)"
+      imageId:    "bind(cluster-windows-nodes.compute#configuration.imageId)"
+      login:      "bind(cluster-windows-nodes.compute#configuration.login)"
+      locationId: "bind(cluster-windows-nodes.compute#configuration.locationId)"
+      userData:   "bind(cluster-windows-nodes.compute#configuration.userData)"
     manage:
       plugins: "bind(jenkins-server#actions.plugins-management)"
       restore-backup: "bind(jenkins-server#actions.restore-backup)"
@@ -50,140 +234,13 @@ application:
       jenkins-server-password: "bind(jenkins-server#result.jenkins-server-password)"
       jenkins-server-pubkey: "bind(jenkins-server#result.jenkins-server-pubkey)"
   bindings:
-    - [linux-nodes.jenkins-linux-slave, jenkins-server]
-    - [windows-nodes.jenkins-windows-slave, jenkins-server]
-    - [proxy#linux-nodes, linux-nodes]
-    - [proxy#windows-nodes, windows-nodes]
+    - [jenkins-server#compute-server, compute]
+    - [cluster-linux-nodes.linux-nodes, jenkins-server]
+    - [cluster-windows-nodes.windows-nodes, jenkins-server]
+    - [ClusterCommander#linux-nodes, cluster-linux-nodes]
+    - [ClusterCommander#windows-nodes, cluster-windows-nodes]
   components:
-    jenkins-server:
-      type: workflow.Instance
-      interfaces:
-        input:
-          server-os: 
-            type: configuration(map<string,object>)
-            suggestions:
-              amazon-linux: {image: "us-east-1/ami-1ba18d72", identity: ec2-user}
-              centos-64: {image: "us-east-1/ami-ee698586", identity: root}
-              ubuntu-1204: {image: "us-east-1/ami-d0f89fb9", identity: ubuntu}
-          server-instance-size: configuration(string)
-          recipe-url: configuration(string)
-          jenkins-server-port: configuration(int)
-          install-method: configuration(string)
-          jenkins-version: configuration(string)
-          plugins-info: configuration(object)
-          plugins-action: configuration(string)
-          backup-uri: configuration(string)
-          restore-type: configuration(string)
-        actions:
-          plugins-management: receive-command(object plugins-info, string plugins-action)
-          restore-backup: receive-command(string backup-uri, string restore-type)
-        result:
-          jenkins-server-host: publish-signal(string)
-          jenkins-server-url: publish-signal(string)
-          jenkins-server-user: publish-signal(string)
-          jenkins-server-password: publish-signal(string)
-          jenkins-server-pubkey: publish-signal(string)
-          jenkins-server-state: publish-signal(string)
-      configuration:
-        configuration.triggers:
-          input.plugins-info: plugins-management
-          input.backup-uri: restore-backup
-        configuration.propagateStatus: [plugins-management,restore-backup]
-        configuration.workflows:
-          launch:
-            steps:
-              - provision-server-vm:
-                  action: provisionVms
-                  parameters:
-                    hardwareId: "{$.server-instance-size}"
-                    imageId: "{$.server-os.image}"
-                    vmIdentity: "{$.server-os.identity}"
-                    roleName: server
-                  output:
-                    jenkins-server-hosts: ips
-
-              - setup-jenkins-server:
-                  action: chefsolo
-                  precedingPhases: [provision-server-vm]
-                  parameters:
-                    recipeUrl: "{$.recipe-url}"
-                    runList: [ "recipe[cookbook_qubell_jenkins::default]" ]
-                    roles: [ server ]
-                    jattrs:
-                      qubell_jenkins: 
-                        version: "{$.jenkins-version}"
-                        plugins: "{$.plugins-info}"
-                        backup_uri: "{$.backup-uri}"
-                        restore_type: "{$.restore-type}"
-                      jenkins:
-                        server:
-                          host: "{$.jenkins-server-hosts[0]}"
-                          port: "{$.jenkins-server-port}"
-                          install_method: "{$.install-method}"
-                  output:
-                    server-attrs: chefState
-            return:
-              jenkins-server-host:
-                value: "{$.jenkins-server-hosts[0]}"
-              jenkins-server-url:
-                value: "http://{$.jenkins-server-hosts[0]}:{$.jenkins-server-port}"
-              jenkins-server-user:
-                value: "admin"
-              jenkins-server-password:
-                value: "{$.server-attrs['*'].jenkins.server.admin_password[0]}"
-              jenkins-server-pubkey:
-                value: "{$.server-attrs['*'].jenkins.server.pubkey[0]}"
-              jenkins-server-state:
-                value: "{$.server-attrs['*'].qubell_jenkins.state[0]}"
-          plugins-management:
-            parameters:
-              - plugins-info:
-                  description: "Plugins name, version and URL as hash"
-              - plugins-action:
-                  default: install
-                  description: "Install or remove"
-            steps:
-              - plugins-management:
-                  action: chefsolo
-                  parameters:
-                    recipeUrl: "{$.recipe-url}"
-                    runList: ["recipe[cookbook_qubell_jenkins::plugins_management]"]
-                    roles: [server]
-                    jattrs:
-                      jenkins:
-                        server:
-                          plugins: "{$.plugins-info}"
-                          plugins_action: "{$.plugins-action}"
-          restore-backup:
-            parameters:
-              - backup-uri:
-                  description: URI to backup archive (zip or tar.gz)
-              - restore-type:
-                  description: Backup contents (jobs, job)
-                  #jobs - will restore all jobs
-                  #job - restore single job
-            steps:
-              - restore-backup:
-                  action: chefsolo
-                  parameters:
-                    recipeUrl: "{$.recipe-url}"
-                    runList: ["recipe[cookbook_qubell_jenkins::restore_backup]"]
-                    roles: [server]
-                    jattrs:
-                      qubell_jenkins:
-                        restore_type: "full"
-                        backup_uri: "{$.backup-uri}"
-                  output:
-                    server-attrs: chefState
-              - wait-jenkins-server:
-                  action: wait
-                  precedingPhases: [restore-backup]
-                  parameters:
-                    delay: 5 minutes
-            return:
-              jenkins-server-state:
-                value: "{$.server-attrs['*'].qubell_jenkins.state[0]}"
-    proxy:
+    ClusterCommander:
       type: workflow.Instance
       interfaces:
         input:
@@ -218,19 +275,149 @@ application:
                       quantity: "{$.slave-windows-quantity}"
                     timeout: 30 minutes
           scale: *scale-wf
+    compute:
+      type: compute.Instance
+    jenkins-server:
+      type: workflow.Instance
+      interfaces:
+        input:
+          recipe-url: configuration(string)
+          jenkins-server-port: configuration(int)
+          install-method: configuration(string)
+          jenkins-version: configuration(string)
+          plugins-info: configuration(object)
+          plugins-action: configuration(string)
+          backup-uri: configuration(string)
+          restore-type: configuration(string)
+        compute-server:
+          networks:        consume-signal(map<string, map<string, string>>)
+          exec:            send-command(string command, int timeout => string stdOut, string stdErr => string stdOut, string stdErr, int exitCode)
+          put-file:        send-command(string filename, bytes payload)
+          get-file:        send-command(string filename => bytes payload)
+        actions:
+          plugins-management: receive-command(object plugins-info, string plugins-action)
+          restore-backup: receive-command(string backup-uri, string restore-type)
+        result:
+          jenkins-server-host: publish-signal(string)
+          jenkins-server-url: publish-signal(string)
+          jenkins-server-user: publish-signal(string)
+          jenkins-server-password: publish-signal(string)
+          jenkins-server-pubkey: publish-signal(string)
+          jenkins-server-state: publish-signal(string)
+      required: [compute-server]
+      configuration:
+        configuration.triggers:
+          input.plugins-info: plugins-management
+          input.backup-uri: restore-backup
+        configuration.propagateStatus: [plugins-management,restore-backup]
+        configuration.workflows:
+          launch:
+            steps:
+              - get-signals:
+                  action: getSignals
+                  output:
+                    signals: result
+              - setup-jenkins-server:
+                  action: chefsolo
+                  precedingPhases: [get-signals]
+                  parameters:
+                    recipeUrl: "{$.recipe-url}"
+                    runList: [ "recipe[cookbook_qubell_jenkins::default]" ]
+                    roles: [ compute-server ]
+                    jattrs:
+                      qubell_jenkins: 
+                        version: "{$.jenkins-version}"
+                        plugins: "{$.plugins-info}"
+                        backup_uri: "{$.backup-uri}"
+                        restore_type: "{$.restore-type}"
+                      jenkins:
+                        server:
+                          host: "{$.signals.compute-server.networks.public.ip}"
+                          port: "{$.jenkins-server-port}"
+                          install_method: "{$.install-method}"
+                  output:
+                    server-attrs: chefState
+            return:
+              jenkins-server-host:
+                value: "{$.signals.compute-server.networks.public.ip}"
+              jenkins-server-url:
+                value: "http://{$.signals.compute-server.networks.public.ip}:{$.jenkins-server-port}"
+              jenkins-server-user:
+                value: "admin"
+              jenkins-server-password:
+                value: "{$.server-attrs['*'].jenkins.server.admin_password[0]}"
+              jenkins-server-pubkey:
+                value: "{$.server-attrs['*'].jenkins.server.pubkey[0]}"
+              jenkins-server-state:
+                value: "{$.server-attrs['*'].qubell_jenkins.state[0]}"
+          plugins-management:
+            parameters:
+              - plugins-info:
+                  description: "Plugins name, version and URL as hash"
+              - plugins-action:
+                  default: install
+                  description: "Install or remove"
+            steps:
+              - plugins-management:
+                  action: chefsolo
+                  parameters:
+                    recipeUrl: "{$.recipe-url}"
+                    runList: ["recipe[cookbook_qubell_jenkins::plugins_management]"]
+                    roles: [compute-server]
+                    jattrs:
+                      jenkins:
+                        server:
+                          plugins: "{$.plugins-info}"
+                          plugins_action: "{$.plugins-action}"
+          restore-backup:
+            parameters:
+              - backup-uri:
+                  description: URI to backup archive (zip or tar.gz)
+              - restore-type:
+                  description: Backup contents (jobs, job)
+                  #jobs - will restore all jobs
+                  #job - restore single job
+            steps:
+              - restore-backup:
+                  action: chefsolo
+                  parameters:
+                    recipeUrl: "{$.recipe-url}"
+                    runList: ["recipe[cookbook_qubell_jenkins::restore_backup]"]
+                    roles: [compute-server]
+                    jattrs:
+                      qubell_jenkins:
+                        restore_type: "full"
+                        backup_uri: "{$.backup-uri}"
+                  output:
+                    server-attrs: chefState
+              - wait-jenkins-server:
+                  action: wait
+                  precedingPhases: [restore-backup]
+                  parameters:
+                    delay: 5 minutes
+            return:
+              jenkins-server-state:
+                value: "{$.server-attrs['*'].qubell_jenkins.state[0]}"
 
-    linux-nodes:
+    cluster-linux-nodes:
       type: composite.Scaler
+      bindings:
+        - [compute, linux-nodes]
       components:
-        jenkins-linux-slave:
+        compute:
+          type: compute.Instance
+        linux-nodes:
           type: workflow.Instance
           interfaces:
             input:
-              slave-linux-os: configuration(object)
-              slave-linux-instance-size: configuration(string)
               recipe-url: configuration(string)
               agent-type: configuration(string)
               availability: configuration(string)
+            compute-linux-nodes:
+              networks:        consume-signal(map<string, map<string, string>>)
+              exec:            send-command(string command, int timeout => string stdOut, string stdErr => string stdOut, string stdErr, int exitCode)
+              put-file:        send-command(string filename, bytes payload)
+              get-file:        send-command(string filename => bytes payload)
             jenkins-server:
               jenkins-server-url: consume-signal(string)
               jenkins-server-pubkey: consume-signal(string)
@@ -239,7 +426,7 @@ application:
               jenkins-server-state: consume-signal(string)
             result:
               jenkins-linux-slaves: publish-signal(object)
-          required: [jenkins-server]
+          required: [compute-linux-nodes, jenkins-server]
           configuration:
             configuration.triggers:
               jenkins-server.jenkins-server-state: update
@@ -247,10 +434,6 @@ application:
             configuration.workflows:
               launch: &update-node
                 parameters:
-                  - slave-linux-os:
-                      description: Jenkins slave OS parameters
-                  - slave-linux-instance-size:
-                      description: Slave instance size
                   - agent-type:
                       default: jnlp
                       description: Jenkins slave node agent type (jnlp, ssh)
@@ -258,26 +441,17 @@ application:
                       default: always
                       description: Jenkins slave node availability (demand, always)
                 steps:
-                  - get-env-props:
-                      action: getEnvironmentProperties
-                      output:
-                        props: result
-                  - provision-vm:
-                      action: provisionVms
-                      precedingPhases: [get-env-props]
+                  - get-signals:
+                      action: getSignals
                       parameters:
-                        hardwareId: "{$.slave-linux-instance-size}"
-                        imageId: "{$.slave-linux-os.image}"
-                        vmIdentity: "{$.slave-linux-os.identity}"
-                        targetQuantity: 1
-                        roleName: default
+                        multi: true
                       output:
-                        jenkins-linux-slave-hosts: ips
+                        signals: result
                   - get-hostname:
                       action: execrun
-                      precedingPhases: [provision-vm]
+                      precedingPhases: [get-signals]
                       parameters:
-                        roles: [ default ]
+                        roles: [ compute-linux-nodes ]
                         isSudo: true
                         command:
                           - curl -s http://169.254.169.254/latest/meta-data/local-hostname
@@ -289,58 +463,65 @@ application:
                         parameters:
                           recipeUrl: "{$.recipe-url}"
                           runList: [ "recipe[cookbook_qubell_jenkins::node]" ]
-                          roles: [ default ]
+                          roles: [ compute-linux-nodes ]
                           jattrs:
                             jenkins:
                               server:
-                                url: "{$.props.jenkins-server.jenkins-server-url}"
-                                pubkey: "{$.props.jenkins-server.jenkins-server-pubkey}"
+                                url: "{$.signals.jenkins-server.*.jenkins-server-url[0]}"
+                                pubkey: "{$.signals.jenkins-server.*.jenkins-server-pubkey[0]}"
                               node:
                                 agent_type: "{$.agent-type}"
                                 availability: "{$.availability}"
                               cli:
-                                username: "{$.props.jenkins-server.jenkins-server-user}"
-                                password: "{$.props.jenkins-server.jenkins-server-password}"
+                                username: "{$.signals.jenkins-server.*.jenkins-server-user[0]}"
+                                password: "{$.signals.jenkins-server.*.jenkins-server-password[0]}"
                 return:
                   jenkins-linux-slaves:
                     value:
-                      hosts: "{$.jenkins-linux-slave-hosts}"
+                      hosts: "{$.signals.compute-linux-nodes.*.networks.public.ip}"
                       pdns: "{$.jenkins-linux-slave-pdns}"
               update: *update-node
               destroy:
                 steps:
-                  - get-env-props:
-                      action: getEnvironmentProperties
+                  - get-signals:
+                      action: getSignals
                       output:
-                        props: result
+                        signals: result
                   - delete-node-from-server:
                       action: chefsolo
-                      precedingPhases: [get-env-props]
+                      precedingPhases: [get-signals]
                       parameters:
                         recipeUrl: "{$.recipe-url}"
                         runList: ["recipe[cookbook_qubell_jenkins::delete_node]"]
-                        roles: [default]
+                        roles: [compute-linux-nodes]
                         jattrs:
                           jenkins:
                             server:
-                              url: "{$.props.jenkins-server.jenkins-server-url}"
+                              url: "{$.signals.jenkins-server.jenkins-server-url}"
                             cli:
-                              username: "{$.props.jenkins-server.jenkins-server-user}"
-                              password: "{$.props.jenkins-server.jenkins-server-password}"
+                              username: "{$.signals.jenkins-server.jenkins-server-user}"
+                              password: "{$.signals.jenkins-server.jenkins-server-password}"
                             node:
                               name: "{$.jenkins-linux-slaves.pdns['*'][0]}"
-    windows-nodes:
+    cluster-windows-nodes:
       type: composite.Scaler
+      bindings:
+        - [compute, windows-nodes]
       components:
-        jenkins-windows-slave:
+        compute:
+          type: compute.Instance
+        windows-nodes:
           type: workflow.Instance
           interfaces:
             input:
-              slave-windows-os: configuration(object)
-              slave-windows-instance-size: configuration(string)
               slave-windows-user-password: configuration(string)
               recipe-url: configuration(string)
               availability: configuration(string)
+            compute-windows-nodes:
+              networks:        consume-signal(map<string, map<string, string>>)
+              exec:            send-command(string command, int timeout => string stdOut, string stdErr => string stdOut, string stdErr, int exitCode)
+              put-file:        send-command(string filename, bytes payload)
+              get-file:        send-command(string filename => bytes payload)
             jenkins-server:
               jenkins-server-url: consume-signal(string)
               jenkins-server-pubkey: consume-signal(string)
@@ -350,196 +531,32 @@ application:
             result:
               jenkins-windows-slaves: publish-signal(object)
               jenkins-windows-slaves-password: publish-signal(object)
-          required: [jenkins-server]
+          required: [ compute-windows-nodes, jenkins-server ]
           configuration:
             configuration.triggers:
               jenkins-server.jenkins-server-state: update
             configuration.propagateStatus: [update]
             configuration.workflows:
               launch: &update-node
-
                 steps:
-                  - get-env-props:
-                      action: getEnvironmentProperties
-                      output:
-                        props: result
-                  - provision-slave-windows-vm:
-                      action: provisionVms
-                      precedingPhases: [get-env-props]
+                  - get-signals:
+                      action: getSignals
                       parameters:
-                        connectTimeout: 20 minutes
-                        hardwareId: "{$.slave-windows-instance-size}"
-                        imageId: "{$.slave-windows-os.image}"
-                        targetQuantity: 1
-                        vmIdentity: "{$.slave-windows-os.identity}"
-                        roleName: default
-                        providerSettings:
-                          userData:
-                             |
-                                <powershell>
-
-                                    If (Test-Path "C:\cygwin64\bin\bash.exe") {{
-
-                                    }} Else {{
-                                          If ((whoami).tolower().endswith("system")) {{
-                                                # Cygwin service management does not work properly when installed and used from SYSTEM user
-                                                # trying to elevate priveleges to Administrator by changing password
-                                                If (Test-Path "C:\pstools\PsExec.exe") {{
-                                                      # already installed, skip
-                                                }} else {{
-                                                      mkdir C:\pstools
-                                                      (New-Object System.Net.WebClient).DownloadFile("http://download.sysinternals.com/files/PSTools.zip", "C:\pstools\PSTools.zip")
-                                                      [System.Reflection.Assembly]::LoadWithPartialName('System.IO.Compression.FileSystem')
-                                                      [System.IO.Compression.ZipFile]::ExtractToDirectory("C:\pstools\PSTools.zip", "C:\pstools")
-                                                }}
-
-                                                $$password = "832d95C060"
-
-                                                # TODO: this assumes that administrator password will be reset by cloudbase-init later
-                                                NET USER ADMINISTRATOR $$password
-
-                                                $$arguments = @("-accepteula", "-u", "Administrator", "-p", $$password, "-h")
-                                                $$arguments = $$arguments + @("powershell") + $$myInvocation.MyCommand.Definition
-                                                Start-Process C:\pstools\psexec.exe -NoNewWindow -ArgumentList $$arguments
-                                                exit
-
-                                          }}
-
-                                          (New-Object System.Net.WebClient).DownloadFile("http://cygwin.com/setup-x86_64.exe", "setup-x86_64.exe")
-
-                                          .\setup-x86_64.exe --no-desktop --site http://mirrors.syringanetworks.net/cygwin/ --quiet-mode --local-package-dir C:\cygwin64\local_packages --packages 'openssh,curl,util-linux,procps,wget' | Out-Host
-
-                                          C:\cygwin64\bin\bash.exe --login -c "cp /usr/bin/ps.exe /usr/bin/ps.exe~; cp /bin/ps.exe /bin/ps.exe~; cp /usr/bin/procps.exe /usr/bin/ps.exe; cp /usr/bin/procps.exe /bin/ps.exe"
-
-                                          C:\cygwin64\bin\bash.exe --login -c "ssh-host-config --yes --user cyg_server --pwd twEntys1x"
-
-                                          # sshd 6.7 is too restrictive, reverting to 6.6 defaults
-                                          C:\cygwin64\bin\bash.exe --login -c "echo Ciphers aes128-ctr,aes192-ctr,aes256-ctr,arcfour256,arcfour128,aes128-cbc,3des-cbc,blowfish-cbc,cast128-cbc,aes192-cbc,aes256-cbc,arcfour >> /etc/sshd_config"
-                                          C:\cygwin64\bin\bash.exe --login -c "echo MACs hmac-md5,hmac-sha1,hmac-ripemd160,hmac-sha1-96,hmac-md5-96 >> /etc/sshd_config"
-                                          C:\cygwin64\bin\bash.exe --login -c "echo KexAlgorithms curve25519-sha256@libssh.org,ecdh-sha2-nistp256,ecdh-sha2-nistp384,ecdh-sha2-nistp521,diffie-hellman-group-exchange-sha256,diffie-hellman-group14-sha1,diffie-hellman-group1-sha1,diffie-hellman-group-exchange-sha1 >> /etc/sshd_config"
-
-                                          netsh advfirewall firewall add rule name="CYGWIN sshd" dir=in action=allow program="C:\cygwin64\usr\sbin\sshd.exe" enable=yes
-                                    }}
-
-                                    If (Test-Path "C:/opscode/chef/bin/chef-solo") {{
-                                        # chef installed, do nothing
-                                    }} Else {{
-                                        cd C:\
-                                        $$chef_build = "10.32.2-3"  # also 11.16.4-1 supported
-                                        $$chef_version = $$chef_build.Split("-")[0]
-                                        $$chef_major_version = $$chef_build.Split(".")[0]
-                                        C:\cygwin64\bin\curl.exe -O "https://opscode-omnibus-packages.s3.amazonaws.com/windows/2008r2/x86_64/chef-windows-$${{chef_build}}.windows.msi"
-                                        Start-Process -FilePath msiexec -ArgumentList /i, "C:\chef-windows-$${{chef_build}}.windows.msi", /quiet, /qn -Wait
-                                        # supply chef original tar
-                                        C:/cygwin64/bin/sed -i "s|tar zxvf|C:/opscode/chef/bin/tar zxvf|"  C:/opscode/chef/embedded/lib/ruby/gems/1.9.1/gems/chef-$${{chef_version}}-x86-mingw32/lib/chef/application/solo.rb
-                                        if ($$chef_major_version -eq "11") {{
-                                            # fix chef bug
-                                            C:/cygwin64/bin/sed -i "s/status.exitstatus/0/g"                   C:/opscode/chef/embedded/lib/ruby/gems/1.9.1/gems/chef-$${{chef_version}}-x86-mingw32/lib/chef/mixin/command.rb
-                                        }}
-                                    }}
-
-                                    C:\cygwin64\bin\bash.exe --login -c "mkdir ~/bin"
-
-                                    C:\cygwin64\bin\bash.exe --login -c "cat > ~/bin/shef <<'EEND'
-                                #!/usr/bin/bash --login
-                                /cygdrive/c/opscode/chef/embedded/bin/ruby.exe C:/opscode/chef/bin/shef `$$*
-                                EEND
-                                chmod +x ~/bin/shef
-                                "
-
-                                    C:\cygwin64\bin\bash.exe --login -c "cat > ~/bin/chef-client <<'EEND'
-                                #!/usr/bin/bash --login
-                                /cygdrive/c/opscode/chef/embedded/bin/ruby.exe C:/opscode/chef/bin/chef-client `$$*
-                                EEND
-                                chmod +x ~/bin/chef-client
-                                "
-
-                                    C:\cygwin64\bin\bash.exe --login -c "cat > ~/bin/chef-solo <<'EEND'
-                                #!/usr/bin/bash --login
-
-                                CONFIG_PATH=
-                                OTHER_ARGS=
-                                while [ \`"x`$$1\`" != x ]; do
-                                    if [ \`"`$$1\`" == -c ]; then
-                                        shift;
-                                        CONFIG_PATH=\`"`$$1\`"
-                                        shift;
-                                    else
-                                        OTHER_ARGS=\`"`$$OTHER_ARGS `$$1\`"
-                                        shift;
-                                    fi
-                                done
-
-                                FILE_CACHE=`$$(grep file_cache_path `$$CONFIG_PATH | awk '{{print `$$2}}' | sed -re 's/\x22(.*)\x22/\1/')
-                                COOKBOOKS=`$$(grep cookbook_path `$$CONFIG_PATH | awk '{{print `$$2}}' | sed -re 's/.*\x22(.*)\x22.*/\1/')
-                                QUBELL_COOKBOOKS=`$$(grep cookbook_path `$$CONFIG_PATH | awk '{{print `$$3}}' | sed -re 's/.*\x22(.*)\x22.*/\1/')
-                                ROLES=`$$(grep role_path `$$CONFIG_PATH | awk '{{print `$$2}}' | sed -re 's/.*\x22(.*)\x22.*/\1/')
-                                DATA_BAGS=`$$(grep data_bag_path `$$CONFIG_PATH | awk '{{print `$$2}}' | sed -re 's/.*\x22(.*)\x22.*/\1/')
-                                NODE_PATH=`$$(grep node_path `$$CONFIG_PATH | awk '{{print `$$2}}' | sed -re 's/.*\x22(.*)\x22.*/\1/')
-                                NODE_NAME=`$$(grep node_name `$$CONFIG_PATH | awk '{{print `$$2}}' | sed -re 's/.*\x22(.*)\x22.*/\1/')
-                                NEW_ROOT=`$$(mktemp -d)
-                                # platform homedir detection behaves wrong in some cases, so we should detect and fix it
-                                if echo `$$NODE_PATH | grep -E '^.?\.undeploy.me' >/dev/null 2>/dev/null; then
-                                    ROOT_FIX=`$$(cygpath -m `$$HOME)/
-                                    OLD_ROOT=`$$ROOT_FIX
-                                else
-                                    ROOT_FIX=''
-                                    OLD_ROOT=`$$FILE_CACHE
-                                fi
-                                pushd `$$OLD_ROOT
-                                icacls . /save access.txt
-                                icacls `$$(cygpath -m `$$NEW_ROOT) /restore access.txt
-                                popd
-                                cp -r `$$ROOT_FIX`$$COOKBOOKS `$$NEW_ROOT/cookbooks 2>/dev/null
-                                cp -r `$$ROOT_FIX`$$QUBELL_COOKBOOKS `$$NEW_ROOT/qubell_cookbooks 2>/dev/null
-                                cp -r `$$ROOT_FIX`$$DATA_BAGS `$$NEW_ROOT/data_bags 2>/dev/null
-                                cp -r `$$ROOT_FIX`$$ROLES `$$NEW_ROOT/roles 2>/dev/null
-                                cd ~
-                                NODE_PATH_FIX=`$$(echo `$$NODE_PATH | cut -c 2-)
-                                mkdir -p `$$NODE_PATH_FIX
-                                chmod 0755 `$$NODE_PATH_FIX
-                                chmod 0755 `$$NODE_PATH_FIX/`$$NODE_NAME.json
-                                chmod 0755 `$$ROOT_FIX`$$NODE_PATH_FIX
-                                chmod 0755 `$$ROOT_FIX`$$NODE_PATH_FIX/`$$NODE_NAME.json
-                                cat `$$CONFIG_PATH | sed -re \`"s|`$$COOKBOOKS|`$$(cygpath -m `$$NEW_ROOT/cookbooks)|;s|`$$QUBELL_COOKBOOKS|`$$(cygpath -m `$$NEW_ROOT/qubell_cookbooks)|;s|`$$DATA_BAGS|`$$(cygpath -m `$$NEW_ROOT/data_bags)|;s|`$$ROLES|`$$(cygpath -m `$$NEW_ROOT/roles)|;s|`$$NODE_PATH|`$$ROOT_FIX`$$NODE_PATH_FIX|;s|\x22`$$FILE_CACHE\x22|\x22`$$(cygpath -m `$$NEW_ROOT)\x22|;\`" > `$$NEW_ROOT/client.rb
-
-                                /cygdrive/c/opscode/chef/embedded/bin/ruby.exe C:/opscode/chef/bin/chef-solo -c `$$(cygpath -m `$$NEW_ROOT/client.rb) `$$OTHER_ARGS
-                                EEND
-                                chmod +x ~/bin/chef-solo
-                                "
-
-                                    C:\cygwin64\bin\bash.exe --login -c "cat > ~/.bashrc <<'EEND'
-                                export LC_ALL=C
-                                export LANG=C
-                                export PATH=~/bin:`$$PATH
-                                EEND
-                                "
-
-                                    C:\cygwin64\bin\bash.exe --login -c "mkdir ~/.ssh"
-                                    $$drive = (Get-Volume -FileSystemLabel config-2 | % {{ $$_.DriveLetter }})
-                                    If (Test-Path "$${{drive}}:\openstack\") {{
-                                        C:\cygwin64\bin\bash.exe --login -c "grep ssh-rsa `$$(find `$$(find /cygdrive -maxdepth 2 -name openstack -or -name ec2) -name 'meta?data.json') | sed -re 's/.*(ssh-rsa [a-zA-Z0-9+/=]+).*/\1/' | uniq >> ~/.ssh/authorized_keys"
-                                    }} Else {{
-                                        C:\cygwin64\bin\bash.exe --login -c "curl --connect-timeout 5 169.254.169.254/latest/meta-data/public-keys/0/openssh-key >> ~/.ssh/authorized_keys"
-                                    }}
-
-                                    net start sshd
-                                </powershell>
-
+                        multi: true
                       output:
-                        jenkins-windows-slave-hosts: ips
-                  - change-admin-password:
-                      action: execrun
-                      precedingPhases: [provision-slave-windows-vm]
-                      parameters:
-                        roles: [default]
-                        command:
-                         - "NET USER ADMINISTRATOR {$.slave-windows-user-password}"
+                        signals: result
+  #                - change-admin-password:
+   #                   action: execrun
+    #                  precedingPhases: [get-signals]
+     #                 parameters:
+      #                  roles: [ compute-windows-nodes ]
+       #                 command:
+        #                 - "NET USER ADMINISTRATOR {$.slave-windows-user-password}"
                   - get-hostname:
                       action: execrun
-                      precedingPhases: [change-admin-password]
+                      precedingPhases: [get-signals]
                       parameters:
-                        roles: [default]
+                        roles: [compute-windows-nodes]
                         command:
                          - hostname
                       output:
@@ -551,17 +568,18 @@ application:
                         isSudo: false
                         recipeUrl: "{$.recipe-url}"
                         runList: [ "recipe[cookbook_qubell_jenkins::node]" ]
-                        roles: [default]
+                        roles: [ compute-windows-nodes ]
                         jattrs:
                           jenkins:
                             server:
-                              url: "{$.props.jenkins-server.jenkins-server-url}"
+                              url: "{$.signals.jenkins-server.*.jenkins-server-url[0]}"
+                              pubkey: "{$.signals.jenkins-server.*.jenkins-server-pubkey[0]}"
                             node:
                               agent_type: "windows"
                               availability: "{$.availability}"
                             cli:
-                              username: "{$.props.jenkins-server.jenkins-server-user}"
-                              password: "{$.props.jenkins-server.jenkins-server-password}"
+                              username: "{$.signals.jenkins-server.*.jenkins-server-user[0]}"
+                              password: "{$.signals.jenkins-server.*.jenkins-server-password[0]}"
                           java:
                             java_home: 'C:\Program Files\Java'
                             windows:
@@ -569,31 +587,31 @@ application:
                 return:
                   jenkins-windows-slaves:
                     value:
-                      hosts: "{$.jenkins-windows-slave-hosts}"
+                      hosts: "{$.signals.compute-windows-nodes.*.networks.public.ip}"
                       pdns: "{$.jenkins-windows-slave-pdns}"
                   jenkins-windows-slaves-password:
                     value: "{$.slave-windows-user-password}"
               update: *update-node
               destroy:
                 steps:
-                  - get-env-props:
-                      action: getEnvironmentProperties
+                  - get-signals:
+                      action: getSignals
                       output:
-                        props: result
+                        signals: result
                   - delete-node-from-server:
                       action: chefsolo
-                      precedingPhases: [get-env-props]
+                      precedingPhases: [get-signals]
                       parameters:
                         isSudo: false
                         recipeUrl: "{$.recipe-url}"
                         runList: ["recipe[cookbook_qubell_jenkins::delete_node]"]
-                        roles: [default]
+                        roles: [compute-windows-nodes]
                         jattrs:
                           jenkins:
                             server:
-                              url: "{$.props.jenkins-server.jenkins-server-url}"
+                              url: "{$.signals.jenkins-server.jenkins-server-url}"
                             cli:
-                              username: "{$.props.jenkins-server.jenkins-server-user}"
-                              password: "{$.props.jenkins-server.jenkins-server-password}"
+                              username: "{$.signals.jenkins-server.jenkins-server-user}"
+                              password: "{$.signals.jenkins-server.jenkins-server-password}"
                             node:
                               name: "{$.jenkins-windows-slaves.pdns['*'][0]}"
